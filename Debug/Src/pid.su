@@ -1,0 +1,2 @@
+pid.c:12:6:rpy_pid_init	24	static
+pid.c:52:6:rpy_pid_update	56	static

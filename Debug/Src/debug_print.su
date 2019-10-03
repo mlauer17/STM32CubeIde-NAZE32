@@ -1,0 +1,3 @@
+debug_print.c:14:6:debugPrintStr	16	static
+debug_print.c:18:6:debugPrintInt	32	static
+debug_print.c:31:6:debugPrintFloat	32	static
