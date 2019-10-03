@@ -1,6 +1,7 @@
 # STM32CubeIde-NAZE32
 
 Example code for programming the Naze32 board in STM32CubeIDE
+
 Currently implemented:
 * I2C (Using existing library)
 * PWM
