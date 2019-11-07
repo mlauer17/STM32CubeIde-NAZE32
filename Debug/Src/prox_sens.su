@@ -1,0 +1,3 @@
+prox_sens.c:56:6:prox_Start	8	static
+prox_sens.c:71:6:prox_Interrupt	16	static
+prox_sens.c:96:7:prox_DistCalc	24	static

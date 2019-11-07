@@ -27,7 +27,7 @@
 
 // Library that handles setup and fetching data from accel and gyro.
 // TO DO: rewrite it to take advantage of DMA functionality.
-#include <sd_hal_mpu6050.h>
+#include "mpu6050.h"
 
 // complimentary filter that converts mpu6050 output to roll and pitch
 // angle in radians.
@@ -44,6 +44,10 @@
 // see the header and c file for more info. Sending standard "printf" function
 // to uart didnt work for some reason.
 #include "debugPrint.h"
+
+
+#include "prox_sens.h"
+#include "comm.h"
 
 /////////////////////////////
 /* USER CODE END Includes */
@@ -66,17 +70,37 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c2;
 
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart1_rx;
 DMA_HandleTypeDef hdma_usart1_tx;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 
-// Buffers used by UART1 in DMA mode
-uint8_t buffer_tx[10] = {1,2,3,4,5,6,7,8,9,10}; // for testing
-uint8_t buffer_rx[10];
+
+extern int prox_Flag;			// Variable used by prox_sens
+extern float prox_Distance;		// Variable used by prox_sens
+
+extern int main_loop_trigger;	// Variable used to synchronize main loop
+
+int main_loop_counter = 0;		// Variable used to synchronize prox_sens in main loop
+
+
+// init comp filter struct
+COMP_FILT comp_filt;
+
+// filters
+FILT acc_filt;
+FILT gyro_filt;
+
+
+
 
 /* USER CODE END PV */
 
@@ -87,6 +111,9 @@ static void MX_DMA_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /////////////////////////
 void pwm_setvalue(uint16_t value, uint32_t channel);
@@ -132,39 +159,52 @@ int main(void)
   MX_I2C2_Init();
   MX_USART1_UART_Init();
   MX_TIM4_Init();
+  MX_TIM3_Init();
+  MX_TIM2_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   ///////////////////////
 
-  // LED logic is reversed. HIGH = LED off
+  // Start timers
+  HAL_TIM_Base_Start_IT(&htim4);	// PWM timer
+  HAL_TIM_Base_Start_IT(&htim3);	// Main loop timer
+  HAL_TIM_Base_Start_IT(&htim2);	// Proximity sensor
+
+  // Indicates when the main loop should be executed.
+  main_loop_trigger = 1;
+
+  // Initialize pwm outputs and set it to 1ms period
+  pwm_init();
+
+  // Wait for the motors to recognize the signal
+  HAL_Delay(1000);
+
+  // init pid
+  pid_init();
+
+  // Reset leds
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
 
-  // init comp filter struct
-  COMP_FILT comp_filt;
-
-  // init pid structs
-  RPY_PID_DATA rpy_pid_data;
-  RPY_PID_VAL rpy_pid_val;
-
-  // init mpu6050 structs
-  SD_MPU6050 mpu1;
-  SD_MPU6050_Result result ;
-
   // setup the mpu6050
-  result = SD_MPU6050_Init(&hi2c2,&mpu1,SD_MPU6050_Device_0,SD_MPU6050_Accelerometer_2G,SD_MPU6050_Gyroscope_250s );
+  int result = MPU6050_Init(&hi2c2);
   HAL_Delay(500);
-  if(result == SD_MPU6050_Result_Ok){
-	  debugPrintStr("mpu6050 ok \n");
+  if(result == 1){
+	  //debugPrintStr("mpu6050 ok \n");
   }
   else {
-	  debugPrintStr("mpu6050 error \n");
-	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
-	  while(1); // Stop code. something is wrong with mpu6050
+	  //debugPrintStr("mpu6050 error \n");
+		  for (int i = 0;i<result*2;i++){
+			  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
+			  HAL_Delay(500);
+		  }
+		  while(1);
   }
 
   // precalculate atan lookup table
   atan_lookup_init(X_MIN, X_MAX, Y_MIN, Y_MAX ,RES_LOOKUP);
 
+  HAL_UART_Receive_DMA(&huart2,buffer_rx,16);
 
   /////////////////////
   /* USER CODE END 2 */
@@ -174,65 +214,126 @@ int main(void)
 
 
   // Blink green LED 5 times to indicate that setup was successful
-  for (int i=0;i<4;i++){
+  for (int i=0;i<6;i++){
 	  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
 	  HAL_Delay(500);
   }
 
+  TIM4->CCR1 = 25000;
+  TIM4->CCR2 = 25000;
+  TIM4->CCR3 = 25000;
+  TIM4->CCR4 = 25000;
+
+  HAL_Delay(1000);
+
+  /*
+  // Proximity sensor part of the code.
+  // try the echo CHANGE PIN
+  HAL_GPIO_WritePin(GPIOA , GPIO_PIN_8, GPIO_PIN_SET);
+  HAL_Delay(1);
+  HAL_GPIO_WritePin(GPIOA , GPIO_PIN_8, GPIO_PIN_RESET);
+  prox_status = 1;
+  */
+
+
+  filt_init(&acc_filt);
+  filt_init(&gyro_filt);
+
   while (1)
   {
 /////////////////////////////////////////////
-	  // Temperature readings from mpu6050 not used at the moment
-	  //SD_MPU6050_ReadTemperature(&hi2c2,&mpu1);
-	  //float temper = mpu1.Temperature;
+// Temperature readings from mpu6050 not used at the moment
+//SD_MPU6050_ReadTemperature(&hi2c2,&mpu1);
+//float temper = mpu1.Temperature;
 
-	  // Direction convention
-	  // x positive - ESC connector
-	  // y positive - usb connector
-	  // z positive - down (SwD pins)
-	  int16_t IMU[5];
+// Direction convention
+// x positive - ESC connector
+// y positive - usb connector
+// z positive - down (SwD pins)
 
-	  SD_MPU6050_ReadAccelerometer(&hi2c2,&mpu1);
-	  IMU[0] = mpu1.Accelerometer_X;
-	  IMU[0] = -IMU[0]; // Flip the sign to fit the convention
-	  IMU[1] = mpu1.Accelerometer_Y;
-	  IMU[2] = mpu1.Accelerometer_Z;
+	  // Execute at 500Hz
+	  if(main_loop_trigger == 1){
 
-	  SD_MPU6050_ReadGyroscope(&hi2c2,&mpu1);
-	  IMU[3] = mpu1.Gyroscope_X;
-	  IMU[4] = mpu1.Gyroscope_Y;
-	  IMU[4] = -IMU[4]; // Flip the sign to fit the convention
-	  IMU[5] = mpu1.Gyroscope_Z;
-	  IMU[5] = -IMU[5]; // Flip the sign to fit the convention
+		  // wait for interrupt
+		  main_loop_trigger = 0;
+
+		  // Every 10 loops (at 50Hz) start the proximity sensor
+		  if(main_loop_counter == 10){
+			  // Set trigger pin high.
+			  HAL_GPIO_WritePin(GPIOA , GPIO_PIN_11, GPIO_PIN_SET);
 
 
+			  // TEST
+			  //char msg[]={'a','b'};
+			  //HAL_UART_Transmit(&huart2, (uint8_t *)msg, 2, 1);
 
-	  float RPY[2];
-	  COMP_FILT_update(IMU, &comp_filt);
+			  //COMM_send_rawSens(); 	// Send raw sensor readings
+			  	COMM_send_states(); 		// Send roll pitch yaw, altitude
+
+			  	// Send data
+			  	HAL_UART_Transmit_DMA(&huart2,buffer_tx,12);
 
 
-	  RPY[0] = comp_filt.roll;
-	  RPY[1] = comp_filt.pitch;
-	  RPY[2] = comp_filt.yaw;
+		  }
+
+		  // Set pin high (used to time the main loop with scope
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+
+		  // Read IMU
+		  MPU6050_ReadAccelerometer(&hi2c2);
+		  MPU6050_ReadGyroscope(&hi2c2);
+
+		  // MCU is mounted upside down. Flip the axis
+		  IMU[0] = IMU[0];
+		  IMU[1] = -IMU[1];
+		  IMU[2] = -IMU[2];
+		  IMU[3] = IMU[3];
+		  IMU[4] = -IMU[4];
+		  IMU[5] = -IMU[5];
+
+		  // Calculate roll pitch and yaw
+		  COMP_FILT_update(&comp_filt);
+
+		  // Every 10 loops (at 50Hz) start the proximity sensor
+		  if(main_loop_counter == 10){
+			  // Set trigger pin low.
+			  HAL_GPIO_WritePin(GPIOA , GPIO_PIN_11, GPIO_PIN_RESET);
+			  // Set prox status flag to 1
+			  prox_Flag = 1;
+			  // Reset loop counter
+			  main_loop_counter = 0;
+		  }
+		  main_loop_counter++;
 
 
-	  debugPrintFloat(RPY[0]);
-	  debugPrintStr(", ");
-	  debugPrintFloat(RPY[1]);
-	  debugPrintStr(", ");
-	  debugPrintFloat(RPY[2]);
-	  debugPrintStr("\n");
+		  // Safety check. If roll or pitch exceeds 45deg/0.78539816rad
+		  // stop the motors. the drone should not operate at such angles.
+		  //if (RPYA[0] > 0.78539816 || RPYA[0] < - 0.78539816 || RPYA[1] > 0.78539816 || RPYA[1] < - 0.78539816){
+			//  stop_motors();
+		  //}
 
-	  // update pid. outputs available in rpy_pid_data->out[i]
-	  rpy_pid_update(RPY, &rpy_pid_data,&rpy_pid_val);
 
-	  // Full throttle, 0 throttle, setup value
-	  // 48000 = 2ms, 24000 = 1ms, 16800 = 0.7ms
-	  pwm_setvalue(48000, TIM_CHANNEL_1);
-	  pwm_setvalue(48000, TIM_CHANNEL_2);
-	  pwm_setvalue(48000, TIM_CHANNEL_3);
-	  pwm_setvalue(48000, TIM_CHANNEL_4);
-	  HAL_Delay(100);
+		  // update pid. outputs available in rpy_pid_data->out[i]
+		  pid_update();
+
+
+		  // Convert from pid values to counter values and
+		  // add/subtract those values from different motors
+
+		  //int motor_2_adj = 2000;
+		  int motor1 = (int)(24000*MOTOR_CMD[0]) + 24000;
+		  int motor2 = (int)(24000*MOTOR_CMD[1]) + 24000;
+		  int motor3 = (int)(24000*MOTOR_CMD[2]) + 24000;
+		  int motor4 = (int)(24000*MOTOR_CMD[3]) + 24000;
+
+		  TIM4->CCR1 = motor1;
+		  TIM4->CCR2 = motor2;
+		  TIM4->CCR3 = motor3;
+		  TIM4->CCR4 = motor4;
+
+		  // Pin used to indicate execution time (probe with scope)
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+	  }
 
 	/////////////////////////
     /* USER CODE END WHILE */
@@ -295,7 +396,7 @@ static void MX_I2C2_Init(void)
 
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
-  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.ClockSpeed = 400000;
   hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c2.Init.OwnAddress1 = 0;
   hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
@@ -310,6 +411,102 @@ static void MX_I2C2_Init(void)
   /* USER CODE BEGIN I2C2_Init 2 */
 
   /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 14;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65000;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 15;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 9000;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_OC_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -334,7 +531,7 @@ static void MX_TIM4_Init(void)
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 2;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 53333;
+  htim4.Init.Period = 42000;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
@@ -390,7 +587,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
+  huart1.Init.BaudRate = 230400;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -404,6 +601,39 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
 
 }
 
@@ -423,6 +653,12 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
+  /* DMA1_Channel6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
+  /* DMA1_Channel7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
 
 }
 
@@ -437,11 +673,33 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, Code_Timing_Pin|GPIO_PIN_11|prox_trig_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3|GPIO_PIN_4, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : Code_Timing_Pin PA11 prox_trig_Pin */
+  GPIO_InitStruct.Pin = Code_Timing_Pin|GPIO_PIN_11|prox_trig_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : prox_echo_Pin */
+  GPIO_InitStruct.Pin = prox_echo_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(prox_echo_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB3 PB4 */
   GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_4;
@@ -450,22 +708,39 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
 ///////////////////////
 
 
-void pwm_setvalue(uint16_t value, uint32_t channel)
+void pwm_init(void)
 {
-    TIM_OC_InitTypeDef sConfigOC;
+	  TIM_OC_InitTypeDef sConfigOC;
 
-    sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = value;
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-    HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim4, channel);
+	  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	  sConfigOC.Pulse = 16800;
+	  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+	  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+
+	  HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1);
+	  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+
+	  HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_2);
+	  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2);
+
+	  HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_3);
+	  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_3);
+
+	  HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_4);
+	  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
 }
 
 
@@ -478,11 +753,32 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart){
 // UART receive callback function. called once the buffer is full
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 
-	//char msg[4] = {'t','e','s','t'};
-	//HAL_UART_Transmit(&huart1,msg,4, 4);
-	//HAL_UART_Transmit_DMA(&huart1,buffer_tx,10);
+	//
+	COMM_parse_cmd();
+
+	// Start a new receive
+	HAL_UART_Receive_DMA(&huart2,buffer_rx,16);
 
 
+}
+
+
+
+
+/**
+  * @brief  This function stops the motors and execution of the program.
+  * 		Call in case of serious failure.
+  * @retval None
+  */
+void stop_motors(void){
+
+	// System failed!
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
+	TIM4->CCR1 = 16800;
+	TIM4->CCR2 = 16800;
+	TIM4->CCR3 = 16800;
+	TIM4->CCR4 = 16800;
+	while(1);
 }
 
 

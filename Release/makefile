@@ -15,23 +15,8 @@ RM := rm -rf
 -include objects.mk
 
 ifneq ($(MAKECMDGOALS),clean)
-ifneq ($(strip $(CC_DEPS)),)
--include $(CC_DEPS)
-endif
-ifneq ($(strip $(C++_DEPS)),)
--include $(C++_DEPS)
-endif
-ifneq ($(strip $(C_UPPER_DEPS)),)
--include $(C_UPPER_DEPS)
-endif
-ifneq ($(strip $(CXX_DEPS)),)
--include $(CXX_DEPS)
-endif
 ifneq ($(strip $(C_DEPS)),)
 -include $(C_DEPS)
-endif
-ifneq ($(strip $(CPP_DEPS)),)
--include $(CPP_DEPS)
 endif
 endif
 
@@ -47,13 +32,16 @@ default.size.stdout \
 OBJDUMP_LIST += \
 naze_board.list \
 
+OBJCOPY_BIN += \
+naze_board.bin \
+
 
 # All Target
 all: naze_board.elf secondary-outputs
 
 # Tool invocations
 naze_board.elf: $(OBJS) $(USER_OBJS) /home/kamil/Nextcloud/Documents/School/P5/naze_board/STM32F103CBTX_FLASH.ld
-	arm-none-eabi-g++ -o "naze_board.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"/home/kamil/Nextcloud/Documents/School/P5/naze_board/STM32F103CBTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="naze_board.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
+	arm-none-eabi-gcc -o "naze_board.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"/home/kamil/Nextcloud/Documents/School/P5/naze_board/STM32F103CBTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="naze_board.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -67,12 +55,17 @@ naze_board.list: $(EXECUTABLES)
 	@echo 'Finished building: $@'
 	@echo ' '
 
+naze_board.bin: $(EXECUTABLES)
+	arm-none-eabi-objcopy  -O binary $(EXECUTABLES) "naze_board.bin"
+	@echo 'Finished building: $@'
+	@echo ' '
+
 # Other Targets
 clean:
 	-$(RM) *
 	-@echo ' '
 
-secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
+secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST) $(OBJCOPY_BIN)
 
 .PHONY: all clean dependents
 .SECONDARY:

@@ -8,10 +8,20 @@
 #include "math.h"
 #include "comp_filt.h"
 
+
+
+FILT acc_filt;
+FILT gyro_filt;
+
+
 int16_t atan_table[LEN_X*LEN_Y] = { 0 };
 
-#define RAW_GYRO_TO_RAD 0.00013323124
-#define RAW_ACC_TO_MS2 0.0005988024
+//#define RAW_GYRO_TO_RAD 0.00013323124 // 250deg/s
+//#define RAW_GYRO_TO_RAD 0.00053263223 // 1000deg/s
+#define RAW_GYRO_TO_RAD 0.0010654012 // 2000deg/s
+#define Ts 1/500
+#define GYRO_GAIN 0.99
+#define ACC_GAIN  (1 - GYRO_GAIN)
 
 
 /* COMP_FILT_update
@@ -21,36 +31,73 @@ int16_t atan_table[LEN_X*LEN_Y] = { 0 };
  * is used
  */
 
-void COMP_FILT_update(int16_t *imu, COMP_FILT* DataStruct) {
+void COMP_FILT_update(COMP_FILT* DataStruct) {
 	// Convert imu readings into new roll pitch and yaw
-	float GYRO_GAIN = 0.95;
-	float ACC_GAIN = 0.05;
-	float Ts = 0.1;
-	float gyro_X = (float)imu[3] * RAW_GYRO_TO_RAD;
-	float gyro_Y = (float)imu[4] * RAW_GYRO_TO_RAD;
 
-	// Acc to roll and pitch
-	// roll = atan2(accY, accZ)
+	//float gyro_X = (float)imu[3] * RAW_GYRO_TO_RAD;
+	//float gyro_Y = (float)imu[4] * RAW_GYRO_TO_RAD;
 
-	//float acc_X = (float)imu[0] * RAW_ACC_TO_MS2;
-	//float acc_Y = (float)imu[1] *  RAW_ACC_TO_MS2;
-	//float acc_Z = (float)imu[2] *  RAW_ACC_TO_MS2;
-	//float acc_roll = atan2(acc_Y,acc_Z);
-	float acc_roll = atan_lookup(imu[1],imu[2]);
+	// Highpass the gyro
 
-	// pitch = atan2(accX, acc magnitude
-	// acc_pitch = atan2(-acc_X ,sqrt(acc_X^2 + acc_Y^2 + acc_Z^2 ));
-	//float acc_pitch = atan2(-acc_X ,acc_Z);
-	float acc_pitch = atan_lookup(-imu[0],imu[2]);
 
-	float roll = acc_roll * ACC_GAIN + (gyro_X * Ts + DataStruct->roll) * GYRO_GAIN;
-	float pitch = acc_pitch * ACC_GAIN + (gyro_Y * Ts + DataStruct->pitch) * GYRO_GAIN;
 
-	DataStruct->roll = roll;
-	DataStruct->pitch = pitch;
-	DataStruct->yaw = 0.0;
+
+	// Lowpass the accelerometer
+	/*
+	float accX = lowpass_filt((float)imu[0],0, &acc_filt);
+	float accY = lowpass_filt((float)imu[1],1, &acc_filt);
+	float accZ = lowpass_filt((float)imu[2],2, &acc_filt);
+	*/
+
+	float accX = (float)IMU[0];
+	float accY = (float)IMU[1];
+	float accZ = (float)IMU[2];
+
+
+	float acc_roll = atan2(accY,accZ);
+	float acc_pitch = atan2(-accX,accZ);
+
+	/*
+	float gyroX = highpass_filt((float)imu[3]* RAW_GYRO_TO_RAD,0, &gyro_filt);
+	float gyroY = highpass_filt((float)imu[4]* RAW_GYRO_TO_RAD,1, &gyro_filt);
+	float gyroZ = highpass_filt((float)imu[5]* RAW_GYRO_TO_RAD,2, &gyro_filt);
+	*/
+
+	float gyroX = (float)IMU[3]* RAW_GYRO_TO_RAD;
+	float gyroY = (float)IMU[4]* RAW_GYRO_TO_RAD;
+	//float gyroZ = (float)IMU[5]* RAW_GYRO_TO_RAD;
+
+
+	float roll = acc_roll * ACC_GAIN + (gyroX * Ts + RPYA[0]) * GYRO_GAIN;
+	float pitch = acc_pitch * ACC_GAIN + (gyroY * Ts + RPYA[1]) * GYRO_GAIN;
+
+	RPYA[0] = roll;
+	RPYA[1] = pitch;
+	RPYA[2] = 0.0;
 
 }
+
+void filt_init(FILT* filt){
+	for (int i =0;i<3;i++){
+		filt->wz0[i]=0;
+		filt->wz1[i]=0;
+	}
+}
+
+float lowpass_filt(int16_t x, int i, FILT* acc_filt){
+	  float y = ACC_b0 * x + acc_filt->wz0[i];
+	  acc_filt->wz0[i] = ACC_b1 * x - ACC_a1 * y + acc_filt->wz1[i];
+	  acc_filt->wz1[i] = ACC_b2 * x - ACC_a2 * y;
+	  return y;
+}
+
+float highpass_filt(int16_t x, int i, FILT* gyro_filt){
+	  float y = GYRO_b0 * x + gyro_filt->wz0[i];
+	  gyro_filt->wz0[i] = GYRO_b1 * x - GYRO_a1 * y + gyro_filt->wz1[i];
+	  gyro_filt->wz1[i] = GYRO_b2 * x - GYRO_a2 * y;
+	  return y;
+}
+
 
 void atan_lookup_init(int xMin, int xMax, int yMin, int yMax, int delta){
 	for (int x=0;x<LEN_X;x++){

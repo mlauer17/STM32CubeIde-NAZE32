@@ -11,6 +11,41 @@
 
 #include <main.h>
 
+extern int16_t IMU[6];
+extern float RPYA[4];
+
+
+
+//#define ACC_SCALE
+
+#define ACC_b0 0.013359200027857
+#define ACC_b1 2*0.013359200027857
+#define ACC_b2 0.013359200027857
+#define ACC_a1 -1.647459981076977
+#define ACC_a2 0.700896781188403
+
+
+#define GYRO_b0 0.991153597831726
+#define GYRO_b1 -1.98230719566345
+#define GYRO_b2 0.991153597831726
+#define GYRO_a1 -1.98222887516022
+#define GYRO_a2 0.982385456562042
+
+
+typedef struct {
+	float wz0[3];
+	float wz1[3];
+} FILT;
+
+
+typedef struct  {
+	/* Private */
+	float roll;
+	float pitch;
+	float yaw;
+} COMP_FILT;
+
+
 #define INT_TO_MS2 float(1/1670)
 
 // lookup for atan function //
@@ -45,16 +80,10 @@
 
 
 
-typedef struct  {
-	/* Private */
-	float roll;
-	float pitch;
-	float yaw;
-} COMP_FILT;
-
-
-
-void COMP_FILT_update(int16_t *imu, COMP_FILT* DataStruct);
+void COMP_FILT_update(COMP_FILT* DataStruct);
+float lowpass_filt(int16_t x, int index, FILT* acc_filt);
+float highpass_filt(int16_t x, int index, FILT* gyro_filt);
+void filt_init(FILT* filt);
 
 void atan_lookup_init(int xMin, int xMax, int yMin, int yMax, int delta);
 float atan_lookup(int16_t x, int16_t y);

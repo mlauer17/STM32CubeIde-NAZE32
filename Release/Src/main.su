@@ -1,3 +1,7 @@
-main.c:119:6:SystemClock_Config	80	static
-main.c:69:5:main	40	static
-main.c:219:6:Error_Handler	0	static
+main.c:317:6:SystemClock_Config	80	static
+main.c:604:6:pwm_setvalue	48	static
+main.c:131:5:main	104	static
+main.c:620:6:HAL_UART_TxCpltCallback	0	static
+main.c:626:6:HAL_UART_RxCpltCallback	24	static
+main.c:678:6:HAL_GPIO_EXTI_Callback	0	static
+main.c:695:6:Error_Handler	0	static

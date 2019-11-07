@@ -8,83 +8,93 @@
 
 #include "pid.h"
 
+float hover_const = 0.41666667;
 
-void rpy_pid_init(RPY_PID_DATA* data, RPY_PID_VAL* pid){
+
+void pid_init(){
 
 	// Initialize with default values
 	for (int i=0;i<3;i++){
-		data->sp[i] = 0;
-		data->out[i] = 0;
-		data->intTot[i] = 0;
-		data->prevErrFilt[i] = 0;
+		pid_data.intTot[i] = 0;
+		pid_data.prevErrFilt[i] = 0;
+		pid_data.freq[i] = 500;
+		pid_data.Ts[i] = 1/pid_data.freq[i];
+		pid_data.out[i] = 0;
 	}
 
-	pid->freq = 450;
-	pid->Ts = 1/pid->freq;
 
 	// Roll pid
-	pid->kp[0] = 1;
-	pid->ki[0] = 1;
-	pid->kd[0] = 1;
-	pid->kn[0] = 1;
-	pid->satMax[0] = 1;
-	pid->satMin[0] = 1;
+	pid_data.kp[0] = 0.1;
+	pid_data.ki[0] = 0.005;
+	pid_data.kd[0] = 0.03;
+	pid_data.kn[0] = 100;
+	pid_data.satMax[0] = 0.3;
+	pid_data.satMin[0] = -0.3;
 
 	// Pitch pid
-	pid->kp[1] = 1;
-	pid->ki[1] = 1;
-	pid->kd[1] = 1;
-	pid->kn[1] = 1;
-	pid->satMax[1] = 1;
-	pid->satMin[1] = 1;
+	pid_data.kp[1] = 0.008;
+	pid_data.ki[1] = 0.002;
+	pid_data.kd[1] = 0.002;
+	pid_data.kn[1] = 100;
+	pid_data.satMax[1] = 0.05;
+	pid_data.satMin[1] = -0.05;
 
 	// Yaw pid
-	pid->kp[2] = 1;
-	pid->ki[2] = 1;
-	pid->kd[2] = 1;
-	pid->kn[2] = 1;
-	pid->satMax[2] = 1;
-	pid->satMin[2] = 1;
+	pid_data.kp[2] = 0.008;
+	pid_data.ki[2] = 0.002;
+	pid_data.kd[2] = 0.002;
+	pid_data.kn[2] = 100;
+	pid_data.satMax[2] = 0.05;
+	pid_data.satMin[2] = -0.05;
 
 }
 
 
-void rpy_pid_update(float *meas, RPY_PID_DATA* data, RPY_PID_VAL* pid) {
+void pid_update() {
 
 
 	// Loop through all pid's (roll,pitch,yaw)
 	for(int i = 0; i<3; i++){
 
 		// Calculate error
-		float err = data->sp[i] - meas[i];
+		float err = RPYA_SP[i] - RPYA[i];
 
 		// Derivative filtering
-		float errFilt = data->prevErrFilt[i] + pid->Ts*pid->kn[i] * (err- data->prevErrFilt[i]);
+		float errFilt = pid_data.prevErrFilt[i] + pid_data.Ts[i] * pid_data.kn[i] * (err - pid_data.prevErrFilt[i]);
 
 		// Derivative error
-		float derErr = (errFilt - data->prevErrFilt[i]) * pid->freq;
+		float derErr = (errFilt - pid_data.prevErrFilt[i]) * pid_data.freq[i];
 
 		// Update prev filtered error
-		data->prevErrFilt[i] = errFilt;
+		pid_data.prevErrFilt[i] = errFilt;
 
 		// Integral error = ki * error * sampling time
-		float intErr = pid->ki[i] * err * pid->Ts ;
+		float intErr = pid_data.ki[i] * err * pid_data.Ts[i];
 
 		// output
-		float out = pid->kp[i]*err + intErr + data->intTot[i] + pid->kd[i] * derErr;
+		float out = pid_data.kp[i]*err + intErr + pid_data.intTot[i] + pid_data.kd[i] * derErr;
 
 		// Saturate output
-		if (out > pid->satMax[i]) {
-			data->out[i] = out;
-			if (intErr < 0) data->intTot[i] += intErr;
+		if (out > pid_data.satMax[i]) {
+			pid_data.out[i] = out;
+			if (intErr < 0) pid_data.intTot[i] += intErr;
 		}
-		else if (out < pid->satMin[i]) {
-			data->out[i] = out;
-			if (intErr > 0) data->intTot[i] += intErr;
+		else if (out < pid_data.satMin[i]) {
+			pid_data.out[i] = out;
+			if (intErr > 0) pid_data.intTot[i] += intErr;
 		}
 		else {
-			data->out[i] = out;
-			data->intTot[i] += intErr;
+			pid_data.out[i] = out;
+			pid_data.intTot[i] += intErr;
 		}
 	}
+
+	// Convert pid outputs to motor commands
+	MOTOR_CMD[0] = (	pid_data.out[0] 	+ pid_data.out[1] 	+ pid_data.out[2] + hover_const);
+	MOTOR_CMD[1] = (   -pid_data.out[0] 	+ pid_data.out[1] 	- pid_data.out[2] + hover_const);
+	MOTOR_CMD[2] = (   -pid_data.out[0] 	- pid_data.out[1] 	+ pid_data.out[2] + hover_const);
+	MOTOR_CMD[3] = (	pid_data.out[0] 	- pid_data.out[1] 	- pid_data.out[2] + hover_const);
+
+
+
 }

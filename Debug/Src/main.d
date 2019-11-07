@@ -24,8 +24,8 @@ Src/main.o: ../Src/main.c ../Inc/main.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h \
- ../Inc/sd_hal_mpu6050.h ../Inc/comp_filt.h ../Inc/pid.h \
- ../Inc/debugPrint.h ../Inc/main.h
+ ../Inc/mpu6050.h ../Inc/comp_filt.h ../Inc/pid.h ../Inc/debugPrint.h \
+ ../Inc/main.h ../Inc/prox_sens.h ../Inc/comm.h
 
 ../Inc/main.h:
 
@@ -79,7 +79,7 @@ Src/main.o: ../Src/main.c ../Inc/main.h \
 
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h:
 
-../Inc/sd_hal_mpu6050.h:
+../Inc/mpu6050.h:
 
 ../Inc/comp_filt.h:
 
@@ -88,3 +88,7 @@ Src/main.o: ../Src/main.c ../Inc/main.h \
 ../Inc/debugPrint.h:
 
 ../Inc/main.h:
+
+../Inc/prox_sens.h:
+
+../Inc/comm.h:

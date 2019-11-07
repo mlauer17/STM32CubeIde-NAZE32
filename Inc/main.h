@@ -38,6 +38,30 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
+
+
+// variable used to run code at fixed frequency
+int main_loop_trigger;
+
+//
+int prox_status;
+
+// raw sensor measurements. acc XYZ, gyro XYZ
+int16_t IMU[6];
+
+// roll pitch yaw and altitude estimate
+float RPYA[4];
+
+// Setpoints
+float RPYA_SP[4];
+
+float MOTOR_CMD[4];
+
+
+// Buffers used by UART1 in DMA mode
+uint8_t buffer_tx[16];
+uint8_t buffer_rx[16];
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -57,9 +81,19 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+void stop_motors(void);
+void pwm_init(void);
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define Code_Timing_Pin GPIO_PIN_0
+#define Code_Timing_GPIO_Port GPIOA
+#define prox_echo_Pin GPIO_PIN_1
+#define prox_echo_GPIO_Port GPIOA
+#define prox_echo_EXTI_IRQn EXTI1_IRQn
+#define prox_trig_Pin GPIO_PIN_12
+#define prox_trig_GPIO_Port GPIOA
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

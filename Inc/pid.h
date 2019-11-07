@@ -8,14 +8,10 @@
 #ifndef PID_H_
 #define PID_H_
 
+extern float RPYA[4];
+extern float RPYA_SP[4];
 
-typedef struct {
-	float sp[3]; 			// Stores setpoints
-	float out[3]; 			// stores outputs
-	float intTot[3]; 		// stores total integral error
-	float prevErrFilt[3];	//
-} RPY_PID_DATA;
-
+extern float MOTOR_CMD[4];
 
 typedef struct  {
 	/* Private */
@@ -25,14 +21,19 @@ typedef struct  {
 	float kn[3];
 	float satMax[3];
 	float satMin[3];
-	float Ts;
-	float freq;
+	float Ts[3];
+	float freq[3];
+	float intTot[3]; 		// stores total integral error
+	float prevErrFilt[3];	//
+	float out[3];
 
-} RPY_PID_VAL;
+} PID_DATA;
 
-void rpy_pid_update(float *meas, RPY_PID_DATA* data, RPY_PID_VAL* pid);
+PID_DATA pid_data;
 
-void rpy_pid_init(RPY_PID_DATA* data, RPY_PID_VAL* pid);
+void pid_update();
+
+void pid_init();
 
 
 #endif /* PID_H_ */

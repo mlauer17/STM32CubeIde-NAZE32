@@ -1,3 +1,6 @@
-comp_filt.c:24:6:COMP_FILT_update	64	static
-comp_filt.c:55:6:atan_lookup_init	40	static
-comp_filt.c:63:7:atan_lookup	64	static
+comp_filt.c:34:6:COMP_FILT_update	64	static
+comp_filt.c:80:6:filt_init	24	static
+comp_filt.c:87:7:lowpass_filt	40	static
+comp_filt.c:94:7:highpass_filt	40	static
+comp_filt.c:102:6:atan_lookup_init	40	static
+comp_filt.c:110:7:atan_lookup	64	static

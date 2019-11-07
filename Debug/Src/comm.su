@@ -1,0 +1,3 @@
+comm.c:7:6:COMM_parse_cmd	32	static
+comm.c:26:6:COMM_send_states	24	static
+comm.c:42:6:COMM_send_rawSens	16	static
